@@ -1,0 +1,474 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title></title>
+    <script src="jquery-2.1.4.js"></script>
+    <script src="knockout-3.3.0.js"></script>
+    <script>
+
+        function point(x, y)
+        {
+            this.x = x;
+            this.y = y;
+        };
+
+        function path(segments)
+        {
+            this.segments = (segments) ? ((segments.length) ? segments : [ segments ] ) : [];
+        };
+
+        path.fromRect = function (r)
+        {
+            var segs = [];
+            segs.push(new pathSegment(new point(r.left, r.top), new point(r.right, r.top)));
+            segs.push(new pathSegment(segs[segs.length-1].p2, new point(r.right, r.bottom)));
+            segs.push(new pathSegment(segs[segs.length-1].p2, new point(r.left, r.bottom)));
+            segs.push(new pathSegment(segs[segs.length-1].p2, segs[0].p1));
+            return new path(segs);
+        };
+
+        function mathWrap(value, min, max)
+        {
+
+            var range = max - min;
+
+            if (range <= 0)
+            {
+                return 0;
+            }
+
+            var result = (value - min) % range;
+
+            if (result < 0)
+            {
+                result += range;
+            }
+
+            return result + min;
+        };
+
+        function pathSegment(p1, p2, rl, rr)
+        {
+            var me = this;
+            this.p1 = p1;
+            this.p2 = p2;
+            this.reflectLeft = rl ? rl : false;
+            this.reflectRight = rr ? rr : false;
+            this.intersectionPoint = function(seg2)
+            {
+                return pathSegment.getIntersection(me, seg2);
+            };
+            this.getAngle = function ()
+            {
+                return Math.atan2(this.p2.y - this.p1.y, this.p2.x - this.p1.x);
+            };
+            this.getNormal = function ()
+            {
+                return mathWrap(me.getAngle() - 1.5707963267948966, -Math.PI, Math.PI);
+            };
+            this.getLength = function ()
+            {
+                return Math.sqrt((this.p2.x - this.p1.x) * (this.p2.x - this.p1.x) + (this.p2.y - this.p1.y) * (this.p2.y - this.p1.y));
+            };
+        };
+        pathSegment.getIntersection = function(seg1, seg2)
+        {
+            var i_x, i_y;
+            var s1_x, s1_y, s2_x, s2_y;
+            s1_x = seg1.p2.x - seg1.p1.x;     s1_y = seg1.p2.y - seg1.p1.y;
+            s2_x = seg2.p2.x - seg2.p1.x;     s2_y = seg2.p2.y - seg2.p1.y;
+
+            var s, t;
+            s = (-s1_y * (seg1.p1.x - seg2.p1.x) + s1_x * (seg1.p1.y - seg2.p1.y)) / (-s2_x * s1_y + s1_x * s2_y);
+            t = ( s2_x * (seg1.p1.y - seg2.p1.y) - s2_y * (seg1.p1.x - seg2.p1.x)) / (-s2_x * s1_y + s1_x * s2_y);
+
+            if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+            {
+                // Collision detected
+                i_x = seg1.p1.x + (t * s1_x);
+                i_y = seg1.p1.y + (t * s1_y);
+                return new point(i_x, i_y);
+            }
+
+            return null; // No collision
+        };
+        pathSegment.getReflectedAngle = function (seg, segIncident)
+        {
+            return 2 * segIncident.getNormal() - Math.PI - seg.getAngle();
+        };
+        pathSegment.fromAngle = function (p1, angle, length)
+        {
+            var reflectedEnd = new point(p1.x + (Math.cos(angle) * length), p1.y + (Math.sin(angle) * length));
+            return new pathSegment(p1, reflectedEnd, false, false);
+        };
+        pathSegment.getReflectedSegment = function (seg, segIncident)
+        {
+            // get intersection
+            var inx = pathSegment.getIntersection(seg, segIncident);
+            if (inx == null) { return null; debugger; }
+
+            // get reflection angle & reflected segment length
+            var angle = pathSegment.getReflectedAngle(seg, segIncident);
+            var length = segIncident.getLength() - (new pathSegment(segIncident.p1, inx)).getLength();
+
+            // return new segment
+            var newSeg = pathSegment.fromAngle(inx, angle, length);
+            console.log('getReflectedSegment: ' +
+                ' (length)' + segIncident.getLength() +
+                ' (remaining)' + length +
+                ' (incoming angle)' + (segIncident.getAngle()) + 
+                ' (reflected angle)' + (angle) +
+                ' (incoming)' + segIncident.p1.x + ',' + segIncident.p1.y +
+                ' (intersect)' + inx.x + ',' + inx.y +
+                ' (reflected)' + newSeg.p2.x + ',' + newSeg.p2.y);
+            return newSeg;
+        };
+
+        function rect(l, t, r, b)
+        {
+            var me = this;
+            this.left = l; this.top = t; this.right = r; this.bottom = b; //this.width = r - l; this.height = b - t;
+            this.getWidth = function () { return this.right - this.left; }
+            this.getHeight = function () { return this.bottom - this.top; }
+            this.absorb = function (pnt)
+            {
+                if (!me.left || pnt.x < me.left) { me.left = pnt.x; }
+                if (!me.right || pnt.x > me.right) { me.right = pnt.x; }
+                if (!me.top || pnt.y < me.top) { me.top = pnt.y; }
+                if (!me.bottom || pnt.y < me.bottom) { me.bottom = pnt.y; }
+            };
+            this.shrink = function (px)
+            {
+                this.left += px; this.right -= px; this.top += px; this.bottom -= px;
+            };
+        };
+
+        function randomSpeed()
+        {
+            return (3 + Math.random() * 4); //* (Math.random() > 0.5 ? 1 : -1);
+        };
+
+        function randomAngle()
+        {
+            return (Math.random() * Math.PI);// - (Math.PI/2);
+        };
+
+        function sprite(x, y, v)
+        {
+            var me = this;
+            this.position = new point(x, y);
+            this.prevPosition = null;
+            this.nextPosition = null;
+            this.movementAngle = randomAngle();
+            this.movementSpeed = randomSpeed();
+
+            this.calculateNext = function ()
+            {
+                me.nextPosition = pathSegment.fromAngle(me.position, me.movementAngle, me.movementSpeed).p2;
+            };
+
+            this.setNext = function (nxt, angle)
+            {
+                me.nextPosition = nxt;
+                me.movementAngle = angle;
+            };
+
+            this.goNext = function ()
+            {
+                if (me.nextPosition == null) { return; }
+                me.prevPosition = me.position;
+                me.position = me.nextPosition;
+                me.nextPosition = null;
+            };
+        };
+
+        function cross()
+        {
+            var me = this;
+            var points = [];
+            var segments = [];
+            var rect = null;
+            this.getSegments = function () { return segments; };
+            this.getRect = function () { if (rect == null) { rect = new rect(); points.forEach(function (val) { size.absorb(val); }); }; return rect; };
+            this.init = function (t, l, sz, th)
+            {
+                t = Math.round(t); l = Math.round(l); sz = Math.round(sz); th = Math.round(th);
+                points = []; segments = []; rect = null;
+                var slen = sz / 2 - th / 2;
+                var y = t + slen + th;
+                var x = l;
+                points.push(new point(x, y));
+                y -= th;
+                points.push(new point(x, y));
+                x += slen;
+                points.push(new point(x, y));
+                y = t;
+                points.push(new point(x, y));
+                x += th;
+                points.push(new point(x, y));
+                y += slen;
+                points.push(new point(x, y));
+                x = l+sz;
+                points.push(new point(x, y));
+                y += th;
+                points.push(new point(x, y));
+                x -= slen;
+                points.push(new point(x, y));
+                y = t+sz;
+                points.push(new point(x, y));
+                x -= th;
+                points.push(new point(x, y));
+                y -= slen;
+                points.push(new point(x, y));
+                x = l;
+                points.push(new point(x, y));
+                for (var i=0; i<points.length; i++)
+                {
+                    if (i < points.length-1)
+                        segments.push(new pathSegment(points[i], points[i + 1], false, true));
+                    else
+                        segments.push(new pathSegment(points[i], points[0], false, true));
+                }
+            };
+            this.draw = function (ctx)
+            {
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                for (var i = 1; i < points.length; i++)
+                {
+                    ctx.lineTo(points[i].x, points[i].y);
+                };
+                ctx.stroke();
+            };
+        };
+
+        function frameMetrics(opt)
+        {
+            var me = this;
+            var last = null;
+            var hist = [];
+            if (!opt) { opt = { length: 20 } };
+            this.begin = function ()
+            {
+                last = new Date();
+            };
+            this.end = function ()
+            {
+                if (last != null) { me.push(new Date() - last); }
+                last = new Date();
+            };
+            this.push = function (val)
+            {
+                hist.push(val);
+                while (hist.length > opt.length) { hist.shift(); }
+            };
+            this.avg = function ()
+            {
+                var sum = 0; var len = hist.length;
+                for (var i=0;i<len;i++)
+                {
+                    sum += hist[i];
+                }
+                return sum / len;
+            };
+        };
+
+        function pointDebris()
+        {
+            var me = this;
+            this.points = [];
+            this.fieldWidth = null;
+            this.fieldHeight = null;
+            var drawAsPixels = true;
+            var ctx = null;
+            
+            this.init = function(bounds)
+            {
+                ctx = toocan.getContext("2d");
+                me.points = [];
+                me.fieldWidth = bounds.getWidth();
+                me.fieldHeight = bounds.getHeight();
+                var newSprite = null; var newSpeed = 1;
+                for (var i = 0; i < 1; i++)
+                {
+                    newSprite = new sprite(bounds.left + Math.round(Math.random() * me.fieldWidth), bounds.top + Math.round(Math.random() * me.fieldHeight), 0, 0);
+                    newSprite.rgb = { r: 255, g: 0, b: 0, a: 255 };
+                    me.points.push(newSprite);
+                }
+            };
+
+            this.calculateMovements = function ()
+            {
+                for (var i = 0; i < me.points.length; i++)
+                {
+                    me.points[i].calculateNext();
+                };
+            };
+
+            this.draw = function ()
+            {
+                if (me.points.length == 0) { me.init(); }
+                
+                //var imgCtx = ctx.getImageData(0, 0, toocan.height, toocan.width);
+                var imgCtx = ctx.createImageData(toocan.width, toocan.height);
+                var offset = 0; var rndX; var rndY;
+                for (var i = 0; i < me.points.length; i++)
+                {
+                    rndX = Math.round(me.points[i].position.x);
+                    rndY = Math.round(me.points[i].position.y);
+                    if (drawAsPixels)
+                    {
+                        offset = (toocan.width * 4 * rndY) + (rndX*4);
+                        imgCtx.data[offset + 0] = me.points[i].rgb.r;
+                        imgCtx.data[offset + 1] = me.points[i].rgb.g;
+                        imgCtx.data[offset + 2] = me.points[i].rgb.b;
+                        imgCtx.data[offset + 3] = me.points[i].rgb.a;
+                        offset += 4;
+                    } else
+                    {
+                        ctx.strokeRect(rndX, rndY, 1, 1);
+                    }
+                }
+
+                if (drawAsPixels) { ctx.putImageData(imgCtx, 0, 0); }
+            };
+        };
+        
+        function animationContext()
+        {
+            var me = this;
+            var defTimer = new frameMetrics();
+            var nextFrameTimer = null;
+            var testCross = new cross();
+            var debris = new pointDebris();
+            var ctx = null;
+
+            var boundingRect = null;
+            var boundingPath = null;
+            //this.d = function () { return debris; }
+            //this.b = function () { return boundingRect; }
+            //this.p = function () { return boundingPath; }
+            var reflectionSegments = [];
+
+            function isLeft(ax, ay, bx, by, cx, cy)
+            {
+                return ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) > 0;
+            }
+
+            function processReflection(pnt,seg)
+            {
+                if (seg.reflectLeft == false && seg.reflectRight == false) { return; }
+                var segIncident = new pathSegment(pnt.position, pnt.nextPosition);
+                var inx = pathSegment.getIntersection(segIncident, seg);
+                if (inx != null)
+                {
+                    var leftCheck = isLeft(seg.p2.x, seg.p2.y, seg.p1.x, seg.p1.y, pnt.position.x, pnt.position.y);
+
+                    // struck a reflecting side?
+                    var isReflecting = (leftCheck && seg.reflectLeft) || (!leftCheck && seg.reflectRight);
+                    if (!isReflecting)
+                    {
+                        pnt.rgb.r = 0;
+                        pnt.rgb.b = 0;
+                        pnt.rgb.g = 255;
+                    } else
+                    {
+                        pnt.rgb.r = 0;
+                        pnt.rgb.b = 255;
+                        pnt.rgb.g = 0;
+
+                        // move point to reflected location
+                        var reflectedSegment = pathSegment.getReflectedSegment(seg, segIncident);
+                        pnt.setNext(reflectedSegment.p2, reflectedSegment.getNormal());
+
+                        // reverse angle
+                        //pnt.vector.horiz *= -1;
+                        //pnt.vector.vert *= -1;
+                        //pnt.nextPosition.x = pnt.position.x; pnt.nextPosition.y = pnt.position.y;
+
+                        // stop at intersection
+                        //pnt.nextPosition.x = inx.x; pnt.nextPosition.y = inx.y;
+                    }
+
+                    // TODO: process additional reflections in path
+                };
+            };
+
+            function processCollisions()
+            {
+                //var reflectingSegments = testCross.getSegments();
+                //var reflectingSegments = boundingPath.segments;
+                //testCross.getSegments().forEach(function (v) { reflectingSegments.push(v); });
+                var pnts = debris.points;
+                for (var i=0; i<pnts.length; i++)
+                {
+                    for (var s = 0; s < reflectionSegments.length; s++)
+                    {
+                        processReflection(pnts[i], reflectionSegments[s]);
+                    }
+                    debris.points[i].goNext();
+                }
+            };
+
+            this.resizeCanvas = function()
+            {
+                ctx.width = window.innerWidth;
+                ctx.height = window.innerHeight;
+                toocan.width = window.innerWidth;
+                toocan.height = window.innerHeight;
+                boundingRect = new rect(0, 0, toocan.width, toocan.height);
+                //boundingRect.shrink(100);
+                boundingPath = path.fromRect(boundingRect);
+                boundingPath.segments.forEach(
+                    function (seg) { seg.reflectRight = true; seg.reflectLeft = true; }
+                    );
+                //boundingPath.segments[3].reflectLeft = false; boundingPath.segments[3].reflectRight = false;
+                
+                var crossSize = ctx.width / 4;
+                testCross.init(ctx.height / 2 - crossSize / 2, ctx.width / 2 - crossSize / 2, crossSize, crossSize / 4);
+
+                reflectionSegments = [];
+                boundingPath.segments.forEach(function (v) { reflectionSegments.push(v); });
+                testCross.getSegments().forEach(function (v) { reflectionSegments.push(v); });
+
+                debris.init(boundingRect);
+            };
+
+            this.animate = function ()
+            {
+                defTimer.begin();
+                debris.calculateMovements();
+                processCollisions();
+                
+                debris.draw();
+                testCross.draw(ctx);
+                defTimer.end();
+                window.setTimeout(me.animate, 100);
+            };
+
+            this.init = function ()
+            {
+                ctx = toocan.getContext("2d");
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 1;
+                me.resizeCanvas();
+                window.addEventListener('resize', me.resizeCanvas, false);
+                window.setInterval(function () { $(statusSpan).text('fps:' + Math.round(10*(1000/defTimer.avg()))/10); }, 1000);
+                //window.setInterval(me.animate, 50);
+                window.setTimeout(me.animate, 0);
+            };
+        };
+
+        var ani = new animationContext();
+        $(document).ready(function ()
+        {
+            
+            ani.init();
+        });
+    </script>
+</head>
+<body style="display: block;margin:0;padding:0;overflow:hidden;">
+    <canvas id="toocan" style="position:absolute;"></canvas>
+    <span id="statusSpan" style="position:absolute;"></span>
+</body>
+</html>
