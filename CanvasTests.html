@@ -54,7 +54,7 @@
             this.p2 = p2;
             this.reflectLeft = rl ? rl : false;
             this.reflectRight = rr ? rr : false;
-            this.intersectionPoint = function(seg2)
+            this.getIntersection = function(seg2)
             {
                 return pathSegment.getIntersection(me, seg2);
             };
@@ -71,7 +71,7 @@
                 return Math.sqrt((this.p2.x - this.p1.x) * (this.p2.x - this.p1.x) + (this.p2.y - this.p1.y) * (this.p2.y - this.p1.y));
             };
         };
-        pathSegment.getIntersection = function(seg1, seg2)
+        pathSegment.getIntersection_old = function(seg1, seg2)
         {
             var i_x, i_y;
             var s1_x, s1_y, s2_x, s2_y;
@@ -92,7 +92,45 @@
 
             return null; // No collision
         };
-        pathSegment.getReflectedAngle = function (seg, segIncident)
+        pathSegment.getIntersection = function(segA, segB, asSegment)
+        {
+            if (typeof asSegment == 'undefined') { asSegment = true; }
+            var result = new point();
+            var a1 = segA.p2.y - segA.p1.y;
+            var a2 = segB.p2.y - segB.p1.y;
+            var b1 = segA.p1.x - segA.p2.x;
+            var b2 = segB.p1.x - segB.p2.x;
+            var c1 = (segA.p2.x * segA.p1.y) - (segA.p1.x * segA.p2.y);
+            var c2 = (segB.p2.x * segB.p1.y) - (segB.p1.x * segB.p2.y);
+            var denom = (a1 * b2) - (a2 * b1);
+
+            if (denom === 0)
+            {
+                return null;
+            }
+
+            result.x = ((b1 * c2) - (b2 * c1)) / denom;
+            result.y = ((a2 * c1) - (a1 * c2)) / denom;
+
+            if (asSegment)
+            {
+                var uc = ((segB.p2.y - segB.p1.y) * (segA.p2.x - segA.p1.x) - (segB.p2.x - segB.p1.x) * (segA.p2.y - segA.p1.y));
+                var ua = (((segB.p2.x - segB.p1.x) * (segA.p1.y - segB.p1.y)) - (segB.p2.y - segB.p1.y) * (segA.p1.x - segB.p1.x)) / uc;
+                var ub = (((segA.p2.x - segA.p1.x) * (segA.p1.y - segB.p1.y)) - ((segA.p2.y - segA.p1.y) * (segA.p1.x - segB.p1.x))) / uc;
+
+                if (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1)
+                {
+                    return result;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+
+            return result;
+        };
+        pathSegment.getReflectedAngle = function (segIncident, seg)
         {
             return 2 * segIncident.getNormal() - Math.PI - seg.getAngle();
         };
@@ -113,21 +151,13 @@
 
             // return new segment
             var newSeg = pathSegment.fromAngle(inx, angle, length);
-            console.log('getReflectedSegment: ' +
-                ' (length)' + segIncident.getLength() +
-                ' (remaining)' + length +
-                ' (incoming angle)' + (segIncident.getAngle()) + 
-                ' (reflected angle)' + (angle) +
-                ' (incoming)' + segIncident.p1.x + ',' + segIncident.p1.y +
-                ' (intersect)' + inx.x + ',' + inx.y +
-                ' (reflected)' + newSeg.p2.x + ',' + newSeg.p2.y);
             return newSeg;
         };
 
         function rect(l, t, r, b)
         {
             var me = this;
-            this.left = l; this.top = t; this.right = r; this.bottom = b; //this.width = r - l; this.height = b - t;
+            this.left = l; this.top = t; this.right = r; this.bottom = b; 
             this.getWidth = function () { return this.right - this.left; }
             this.getHeight = function () { return this.bottom - this.top; }
             this.absorb = function (pnt)
@@ -145,19 +175,21 @@
 
         function randomSpeed()
         {
-            return (3 + Math.random() * 4); //* (Math.random() > 0.5 ? 1 : -1);
+            return (2 + Math.random() * 7); 
         };
 
         function randomAngle()
         {
-            return (Math.random() * Math.PI);// - (Math.PI/2);
+            return randomAngle.crossAxisSpacing
+                    + (Math.random() * (Math.PI / 2 - (randomAngle.crossAxisSpacing*2))
+                    + (Math.PI / 2 * Math.round(Math.random() * 4)));
         };
+        randomAngle.crossAxisSpacing = 0.1; // radians to avoid at the vert/horiz axes
 
         function sprite(x, y, v)
         {
             var me = this;
             this.position = new point(x, y);
-            this.prevPosition = null;
             this.nextPosition = null;
             this.movementAngle = randomAngle();
             this.movementSpeed = randomSpeed();
@@ -165,10 +197,12 @@
             this.calculateNext = function ()
             {
                 me.nextPosition = pathSegment.fromAngle(me.position, me.movementAngle, me.movementSpeed).p2;
+                if (me.nextPosition == null) debugger;
             };
 
             this.setNext = function (nxt, angle)
             {
+                if (nxt == null) debugger;
                 me.nextPosition = nxt;
                 me.movementAngle = angle;
             };
@@ -176,7 +210,6 @@
             this.goNext = function ()
             {
                 if (me.nextPosition == null) { return; }
-                me.prevPosition = me.position;
                 me.position = me.nextPosition;
                 me.nextPosition = null;
             };
@@ -187,13 +220,13 @@
             var me = this;
             var points = [];
             var segments = [];
-            var rect = null;
+            var bounds = null;
             this.getSegments = function () { return segments; };
-            this.getRect = function () { if (rect == null) { rect = new rect(); points.forEach(function (val) { size.absorb(val); }); }; return rect; };
+            this.getRect = function () { if (rect == null) { bounds = new rect(); points.forEach(function (val) { bounds.absorb(val); }); }; return bounds; };
             this.init = function (t, l, sz, th)
             {
                 t = Math.round(t); l = Math.round(l); sz = Math.round(sz); th = Math.round(th);
-                points = []; segments = []; rect = null;
+                points = []; segments = []; bounds = new rect(l, t, l + sz, t + sz);
                 var slen = sz / 2 - th / 2;
                 var y = t + slen + th;
                 var x = l;
@@ -232,6 +265,7 @@
             };
             this.draw = function (ctx)
             {
+                ctx.strokeStyle = "black";
                 ctx.beginPath();
                 ctx.moveTo(points[0].x, points[0].y);
                 for (var i = 1; i < points.length; i++)
@@ -275,8 +309,9 @@
 
         function pointDebris()
         {
+            var debrisCnt = 1000;
             var me = this;
-            this.points = [];
+            this.spritePoints = [];
             this.fieldWidth = null;
             this.fieldHeight = null;
             var drawAsPixels = true;
@@ -285,44 +320,45 @@
             this.init = function(bounds)
             {
                 ctx = toocan.getContext("2d");
-                me.points = [];
+                me.spritePoints = [];
                 me.fieldWidth = bounds.getWidth();
                 me.fieldHeight = bounds.getHeight();
                 var newSprite = null; var newSpeed = 1;
-                for (var i = 0; i < 1; i++)
+                for (var i = 0; i < debrisCnt; i++)
                 {
-                    newSprite = new sprite(bounds.left + Math.round(Math.random() * me.fieldWidth), bounds.top + Math.round(Math.random() * me.fieldHeight), 0, 0);
+                    //newSprite = new sprite(bounds.left + Math.round(Math.random() * me.fieldWidth), bounds.top + Math.round(Math.random() * me.fieldHeight), 0, 0);
+                    newSprite = new sprite(me.fieldWidth/4, me.fieldHeight/4, 0, 0);
                     newSprite.rgb = { r: 255, g: 0, b: 0, a: 255 };
-                    me.points.push(newSprite);
+                    me.spritePoints.push(newSprite);
                 }
             };
 
             this.calculateMovements = function ()
             {
-                for (var i = 0; i < me.points.length; i++)
+                for (var i = 0; i < me.spritePoints.length; i++)
                 {
-                    me.points[i].calculateNext();
+                    me.spritePoints[i].calculateNext();
                 };
             };
 
             this.draw = function ()
             {
-                if (me.points.length == 0) { me.init(); }
+                if (me.spritePoints.length == 0) { me.init(); }
                 
                 //var imgCtx = ctx.getImageData(0, 0, toocan.height, toocan.width);
                 var imgCtx = ctx.createImageData(toocan.width, toocan.height);
                 var offset = 0; var rndX; var rndY;
-                for (var i = 0; i < me.points.length; i++)
+                for (var i = 0; i < me.spritePoints.length; i++)
                 {
-                    rndX = Math.round(me.points[i].position.x);
-                    rndY = Math.round(me.points[i].position.y);
+                    rndX = Math.round(me.spritePoints[i].position.x);
+                    rndY = Math.round(me.spritePoints[i].position.y);
                     if (drawAsPixels)
                     {
                         offset = (toocan.width * 4 * rndY) + (rndX*4);
-                        imgCtx.data[offset + 0] = me.points[i].rgb.r;
-                        imgCtx.data[offset + 1] = me.points[i].rgb.g;
-                        imgCtx.data[offset + 2] = me.points[i].rgb.b;
-                        imgCtx.data[offset + 3] = me.points[i].rgb.a;
+                        imgCtx.data[offset + 0] = me.spritePoints[i].rgb.r;
+                        imgCtx.data[offset + 1] = me.spritePoints[i].rgb.g;
+                        imgCtx.data[offset + 2] = me.spritePoints[i].rgb.b;
+                        imgCtx.data[offset + 3] = me.spritePoints[i].rgb.a;
                         offset += 4;
                     } else
                     {
@@ -338,6 +374,7 @@
         {
             var me = this;
             var defTimer = new frameMetrics();
+            var lastCollisionCount = 0;
             var nextFrameTimer = null;
             var testCross = new cross();
             var debris = new pointDebris();
@@ -345,19 +382,17 @@
 
             var boundingRect = null;
             var boundingPath = null;
-            //this.d = function () { return debris; }
-            //this.b = function () { return boundingRect; }
-            //this.p = function () { return boundingPath; }
             var reflectionSegments = [];
+            var additionalRenderings = [];
 
             function isLeft(ax, ay, bx, by, cx, cy)
             {
                 return ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) > 0;
             }
 
-            function processReflection(pnt,seg)
+            function checkSegmentReflectsPointPath(pnt,seg)
             {
-                if (seg.reflectLeft == false && seg.reflectRight == false) { return; }
+                if (seg.reflectLeft == false && seg.reflectRight == false) { return false; }
                 var segIncident = new pathSegment(pnt.position, pnt.nextPosition);
                 var inx = pathSegment.getIntersection(segIncident, seg);
                 if (inx != null)
@@ -366,48 +401,54 @@
 
                     // struck a reflecting side?
                     var isReflecting = (leftCheck && seg.reflectLeft) || (!leftCheck && seg.reflectRight);
-                    if (!isReflecting)
+                    if (isReflecting)
                     {
-                        pnt.rgb.r = 0;
-                        pnt.rgb.b = 0;
-                        pnt.rgb.g = 255;
-                    } else
-                    {
-                        pnt.rgb.r = 0;
-                        pnt.rgb.b = 255;
-                        pnt.rgb.g = 0;
-
-                        // move point to reflected location
+                        // reset point to end of reflected location
                         var reflectedSegment = pathSegment.getReflectedSegment(seg, segIncident);
-                        pnt.setNext(reflectedSegment.p2, reflectedSegment.getNormal());
-
-                        // reverse angle
-                        //pnt.vector.horiz *= -1;
-                        //pnt.vector.vert *= -1;
-                        //pnt.nextPosition.x = pnt.position.x; pnt.nextPosition.y = pnt.position.y;
-
-                        // stop at intersection
-                        //pnt.nextPosition.x = inx.x; pnt.nextPosition.y = inx.y;
+                        pnt.position.x = inx.x; pnt.position.y = inx.y
+                        pnt.setNext(reflectedSegment.p2, reflectedSegment.getAngle());
                     }
 
-                    // TODO: process additional reflections in path
-                };
+                    return isReflecting;
+                } else
+                {
+                    return false;
+                }
             };
 
-            function processCollisions()
+            function checkDebrisItemCollision(pnt, excludeSegments, depth)
+            {
+                if (typeof depth == 'undefined') { var depth = 0; }
+                if (typeof excludeSegments == 'undefined') { excludeSegments = []; }
+                if (depth > 10) debugger;
+                var reflections = 0;
+                for (var s = 0; s < reflectionSegments.length; s++)
+                {
+                    if (excludeSegments.indexOf(reflectionSegments[s]) > -1) continue;
+                    if (checkSegmentReflectsPointPath(pnt, reflectionSegments[s]) === true)
+                    {
+                        reflections++;
+                        excludeSegments.push(reflectionSegments[s]);
+                        reflections += checkDebrisItemCollision(pnt, excludeSegments, depth+1);
+                    }
+                }
+                return reflections;
+            };
+
+            function checkDebrisCollisions()
             {
                 //var reflectingSegments = testCross.getSegments();
                 //var reflectingSegments = boundingPath.segments;
                 //testCross.getSegments().forEach(function (v) { reflectingSegments.push(v); });
-                var pnts = debris.points;
+                var pnts = debris.spritePoints;
+                var reflectionCnt = 0;
                 for (var i=0; i<pnts.length; i++)
                 {
-                    for (var s = 0; s < reflectionSegments.length; s++)
-                    {
-                        processReflection(pnts[i], reflectionSegments[s]);
-                    }
-                    debris.points[i].goNext();
+                    if (pnts[i].nextPosition == null) debugger;
+                    reflectionCnt += checkDebrisItemCollision(pnts[i]);
+                    pnts[i].goNext();
                 }
+                return reflectionCnt;
             };
 
             this.resizeCanvas = function()
@@ -421,10 +462,8 @@
                 boundingPath = path.fromRect(boundingRect);
                 boundingPath.segments.forEach(
                     function (seg) { seg.reflectRight = true; seg.reflectLeft = true; }
-                    );
-                //boundingPath.segments[3].reflectLeft = false; boundingPath.segments[3].reflectRight = false;
-                
-                var crossSize = ctx.width / 4;
+                    );                
+                var crossSize = ctx.width / 2.2;
                 testCross.init(ctx.height / 2 - crossSize / 2, ctx.width / 2 - crossSize / 2, crossSize, crossSize / 4);
 
                 reflectionSegments = [];
@@ -436,14 +475,30 @@
 
             this.animate = function ()
             {
+                var now = new Date();
+
                 defTimer.begin();
                 debris.calculateMovements();
-                processCollisions();
-                
+                lastCollisionCount = checkDebrisCollisions();
+
                 debris.draw();
                 testCross.draw(ctx);
+
+                for (var i = 0; i < additionalRenderings.length; )
+                {
+                    if (additionalRenderings[i].expires <= now)
+                    {
+                        additionalRenderings.splice(i, 1);
+                    } else
+                    {
+                        additionalRenderings[i].render();
+                        i++;
+                    }
+                }
+
                 defTimer.end();
-                window.setTimeout(me.animate, 100);
+
+                window.setTimeout(me.animate, 10);
             };
 
             this.init = function ()
@@ -453,8 +508,7 @@
                 ctx.lineWidth = 1;
                 me.resizeCanvas();
                 window.addEventListener('resize', me.resizeCanvas, false);
-                window.setInterval(function () { $(statusSpan).text('fps:' + Math.round(10*(1000/defTimer.avg()))/10); }, 1000);
-                //window.setInterval(me.animate, 50);
+                window.setInterval(function () { $(statusSpan).text('fps:' + Math.round(10*(1000/defTimer.avg()))/10 + ' / collisions: ' + lastCollisionCount); }, 1000);
                 window.setTimeout(me.animate, 0);
             };
         };
@@ -462,7 +516,6 @@
         var ani = new animationContext();
         $(document).ready(function ()
         {
-            
             ani.init();
         });
     </script>
